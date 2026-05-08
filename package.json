@@ -1,0 +1,32 @@
+{
+    "name": "proyecto",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "server.js",
+    "scripts": {
+        "dev": "nodemon server.js",
+        "start": "node server.js"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Manu934/Proyecto.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/Manu934/Proyecto/issues"
+    },
+    "homepage": "https://github.com/Manu934/Proyecto#readme",
+    "description": "",
+    "dependencies": {
+        "@google/generative-ai": "^0.24.1",
+        "cors": "^2.8.6",
+        "dotenv": "^17.4.2",
+        "express": "^5.2.1",
+        "mysql2": "^3.22.3"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.14"
+    }
+}
