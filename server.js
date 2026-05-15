@@ -5,17 +5,19 @@ import dotenv from "dotenv";
 import pruebasRoutes from "./routes/pruebas.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import geminiRoutes from "./routes/gemini.routes.js";
+import authRoutes from "./routes/auth.routes.js";
 
 dotenv.config();
 
 const app = express();
 
-app.use(cors());              
-app.use(express.json());    
+app.use(cors());
+app.use(express.json());
 
 app.use("/api/pruebas", pruebasRoutes);
-app.use("/api/admin",   adminRoutes);
-app.use("/api/ia",      geminiRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/ia", geminiRoutes);
+app.use("/api/auth", authRoutes);
 
 app.get("/", (req, res) => {
   res.json({ status: "ok", message: "tuspruebas API corriendo" });
