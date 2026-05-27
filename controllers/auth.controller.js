@@ -44,3 +44,13 @@ export const login = async (req, res) => {
     res.status(500).json({ ok: false, message: "Error al iniciar sesión", error: error.message });
   }
 };
+
+export const googleCallback = (req, res) => {
+  const usuario = req.user;
+  const token = jwt.sign(
+    { id: usuario.id, email: usuario.email, rol: usuario.rol },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+  res.json({ ok: true, token, usuario: { id: usuario.id, nombre: usuario.nombre, email: usuario.email, rol: usuario.rol } });
+};

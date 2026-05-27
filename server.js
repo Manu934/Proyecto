@@ -6,6 +6,7 @@ import pruebasRoutes from "./routes/pruebas.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import geminiRoutes from "./routes/gemini.routes.js";
 import authRoutes from "./routes/auth.routes.js";
+import passport from "./config/passport.js";
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ app.use("/api/pruebas", pruebasRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/ia", geminiRoutes);
 app.use("/api/auth", authRoutes);
+app.use(passport.initialize());
 
 app.get("/", (req, res) => {
   res.json({ status: "ok", message: "tuspruebas API corriendo" });
