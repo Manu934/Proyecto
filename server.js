@@ -12,14 +12,17 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: "http://localhost:5173",
+  credentials: true
+}));
 app.use(express.json());
+app.use(passport.initialize());
 
 app.use("/api/pruebas", pruebasRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/ia", geminiRoutes);
 app.use("/api/auth", authRoutes);
-app.use(passport.initialize());
 
 app.get("/", (req, res) => {
   res.json({ status: "ok", message: "tuspruebas API corriendo" });
