@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tusPruebas — API Tester</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap');
+  :root {
+    --bg: #0D1117; --surface: #161B22; --surface2: #1C2128; --border: #21262D;
+    --green: #4ADE80; --blue: #60A5FA; --purple: #A78BFA; --orange: #F59E0B;
+    --red: #F87171; --white: #E6EDF3; --gray: #7D8590;
+    --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--white); font-family:var(--sans); min-height:100vh; }
+  header { display:flex; align-items:center; gap:12px; padding:20px 32px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:100; }
+  .logo { font-size:20px; font-weight:800; }
+  .logo span { color:var(--blue); }
+  .badge { background:var(--surface2); border:1px solid var(--border); color:var(--gray); font-family:var(--mono); font-size:11px; padding:3px 8px; border-radius:4px; }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--gray); margin-left:auto; transition:background 0.3s; }
+  .status-dot.online { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .status-dot.offline { background:var(--red); }
+  .status-label { font-family:var(--mono); font-size:11px; color:var(--gray); }
+  .layout { display:grid; grid-template-columns:240px 1fr; height:calc(100vh - 61px); }
+  aside { border-right:1px solid var(--border); padding:20px 0; overflow-y:auto; }
+  .section-label { font-family:var(--mono); font-size:10px; color:var(--gray); letter-spacing:0.1em; text-transform:uppercase; padding:0 16px 8px; }
+  .endpoint-btn { display:flex; align-items:center; gap:10px; width:100%; padding:10px 16px; background:none; border:none; cursor:pointer; color:var(--gray); font-family:var(--sans); font-size:13px; text-align:left; transition:all 0.15s; border-left:2px solid transparent; }
+  .endpoint-btn:hover { background:var(--surface); color:var(--white); }
+  .endpoint-btn.active { background:var(--surface); color:var(--white); border-left-color:var(--blue); }
+  .method-tag { font-family:var(--mono); font-size:10px; font-weight:700; padding:2px 6px; border-radius:3px; min-width:36px; text-align:center; }
+  .GET    { background:rgba(96,165,250,0.15); color:var(--blue); }
+  .POST   { background:rgba(74,222,128,0.15); color:var(--green); }
+  .PATCH  { background:rgba(245,158,11,0.15); color:var(--orange); }
+  .DELETE { background:rgba(248,113,113,0.15); color:var(--red); }
+  .separator { height:1px; background:var(--border); margin:12px 16px; }
+  main { display:flex; flex-direction:column; overflow:hidden; }
+  .top-bar { display:flex; align-items:center; gap:12px; padding:16px 24px; border-bottom:1px solid var(--border); }
+  .url-display { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:8px 14px; font-family:var(--mono); font-size:13px; color:var(--white); display:flex; align-items:center; gap:10px; }
+  .url-display .base { color:var(--gray); }
+  .run-btn { background:var(--blue); color:#0D1117; border:none; border-radius:6px; padding:9px 20px; font-family:var(--sans); font-size:13px; font-weight:700; cursor:pointer; transition:all 0.15s; }
+  .run-btn:hover { background:#93C5FD; }
+  .run-btn:disabled { opacity:0.5; cursor:not-allowed; }
+  .panels { display:grid; grid-template-columns:1fr 1fr; flex:1; overflow:hidden; }
+  .panel { display:flex; flex-direction:column; overflow:hidden; }
+  .panel:first-child { border-right:1px solid var(--border); }
+  .panel-header { display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); }
+  .panel-title { font-family:var(--mono); font-size:11px; color:var(--gray); text-transform:uppercase; letter-spacing:0.08em; }
+  .panel-content { flex:1; overflow-y:auto; padding:16px; }
+  textarea { width:100%; height:100%; min-height:200px; background:transparent; border:none; outline:none; color:var(--white); font-family:var(--mono); font-size:13px; line-height:1.6; resize:none; }
+  .response-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:12px; color:var(--gray); }
+  .response-empty .icon { font-size:32px; opacity:0.4; }
+  .response-empty p { font-size:13px; font-family:var(--mono); }
+  .response-content { font-family:var(--mono); font-size:13px; line-height:1.7; white-space:pre-wrap; word-break:break-all; }
+  .json-key { color:var(--blue); }
+  .json-string { color:var(--green); }
+  .json-number { color:var(--orange); }
+  .json-bool { color:var(--purple); }
+  .json-null { color:var(--gray); }
+  .status-badge { font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; font-weight:700; }
+  .s2xx { background:rgba(74,222,128,0.15); color:var(--green); }
+  .s4xx { background:rgba(245,158,11,0.15); color:var(--orange); }
+  .s5xx { background:rgba(248,113,113,0.15); color:var(--red); }
+  .time-badge { font-family:var(--mono); font-size:11px; color:var(--gray); }
+  .token-bar { padding:10px 16px; border-top:1px solid var(--border); background:var(--surface); display:flex; align-items:center; gap:10px; }
+  .token-bar label { font-family:var(--mono); font-size:11px; color:var(--gray); white-space:nowrap; }
+  .token-input { flex:1; background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:5px 10px; font-family:var(--mono); font-size:11px; color:var(--white); outline:none; }
+  .token-input:focus { border-color:var(--blue); }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .loading { display:inline-block; animation:spin 0.8s linear infinite; }
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">tus<span>Pruebas</span></div>
+  <div class="badge">API Tester</div>
+  <div class="badge" style="margin-left:4px">localhost:3000</div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+    <div class="status-label" id="statusLabel">Verificando...</div>
+    <div class="status-dot" id="statusDot"></div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="section-label">Auth</div>
+    <button class="endpoint-btn active" id="btn0" onclick="sel(0)">
+      <span class="method-tag POST">POST</span> /auth/register
+    </button>
+    <button class="endpoint-btn" id="btn1" onclick="sel(1)">
+      <span class="method-tag POST">POST</span> /auth/login
+    </button>
+    <div class="separator"></div>
+    <div class="section-label">Pruebas</div>
+    <button class="endpoint-btn" id="btn2" onclick="sel(2)">
+      <span class="method-tag GET">GET</span> /pruebas
+    </button>
+    <button class="endpoint-btn" id="btn3" onclick="sel(3)">
+      <span class="method-tag GET">GET</span> /pruebas/:id
+    </button>
+    <button class="endpoint-btn" id="btn4" onclick="sel(4)">
+      <span class="method-tag POST">POST</span> /pruebas
+    </button>
+    <button class="endpoint-btn" id="btn5" onclick="sel(5)">
+      <span class="method-tag DELETE">DEL</span> /pruebas/:id
+    </button>
+    <div class="separator"></div>
+    <div class="section-label">Admin</div>
+    <button class="endpoint-btn" id="btn6" onclick="sel(6)">
+      <span class="method-tag GET">GET</span> /admin/pendientes
+    </button>
+    <button class="endpoint-btn" id="btn7" onclick="sel(7)">
+      <span class="method-tag PATCH">PATCH</span> /admin/:id/estado
+    </button>
+    <div class="separator"></div>
+    <div class="section-label">IA</div>
+    <button class="endpoint-btn" id="btn8" onclick="sel(8)">
+      <span class="method-tag POST">POST</span> /ia/:id/preguntar
+    </button>
+    <button class="endpoint-btn" id="btn9" onclick="sel(9)">
+      <span class="method-tag POST">POST</span> /ia/:id/generar
+    </button>
+  </aside>
+
+  <main>
+    <div class="top-bar">
+      <div class="url-display">
+        <span id="methodDisplay" class="method-tag POST">POST</span>
+        <span class="base">http://localhost:3000</span>
+        <input id="pathDisplay" style="background:transparent;border:none;outline:none;color:var(--white);font-family:var(--mono);font-size:13px;flex:1;" value="/api/auth/register">      <button class="run-btn" id="runBtn" onclick="runRequest()">Enviar</button>
+    </div>
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Body (JSON)</span>
+        </div>
+        <div class="panel-content">
+          <textarea id="bodyInput" placeholder="Sin body para este endpoint"></textarea>
+        </div>
+        <div class="token-bar">
+          <label>JWT TOKEN</label>
+          <input class="token-input" id="tokenInput" placeholder="Se autocompleta al hacer login...">
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Response</span>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="time-badge" id="timeBadge"></span>
+            <span class="status-badge" id="statusBadge"></span>
+          </div>
+        </div>
+        <div class="panel-content" id="responsePanel">
+          <div class="response-empty">
+            <div class="icon">o</div>
+            <p>Presiona Enviar para ejecutar</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+var BASE = 'http://localhost:3000';
+var endpoints = [
+  { method:'POST', path:'/api/auth/register', body:'{\n  "nombre": "Test User",\n  "email": "test@tuspruebas.com",\n  "password": "123456"\n}', auth:false },
+  { method:'POST', path:'/api/auth/login',    body:'{\n  "email": "manu@tuspruebas.com",\n  "password": "123456"\n}', auth:false },
+  { method:'GET',  path:'/api/pruebas',       body:'', auth:true },
+  { method:'GET',  path:'/api/pruebas/1',     body:'', auth:true },
+  { method:'POST', path:'/api/pruebas',       body:'{\n  "titulo": "Prueba de Matematica",\n  "materia": "Matematica",\n  "anio": "4to año",\n  "profesor": "Garcia",\n  "tema": "Integrales",\n  "escuela": "ORT Almagro",\n  "contenido": { "ejercicios": ["Calcular la integral de x2"] }\n}', auth:true },
+  { method:'DELETE', path:'/api/pruebas/1',   body:'', auth:true },
+  { method:'GET',  path:'/api/admin/pendientes', body:'', auth:true },
+  { method:'PATCH', path:'/api/admin/1/estado',  body:'{\n  "estado": "aprobada"\n}', auth:true },
+  { method:'POST', path:'/api/ia/1/preguntar',   body:'{\n  "pregunta": "Cuales son los temas principales de esta prueba?"\n}', auth:true },
+  { method:'POST', path:'/api/ia/1/generar',     body:'', auth:true }
+];
+var current = 0;
+
+function sel(i) {
+  current = i;
+  for (var j = 0; j < 10; j++) {
+    var b = document.getElementById('btn' + j);
+    if (b) b.className = 'endpoint-btn' + (j === i ? ' active' : '');
+  }
+  var ep = endpoints[i];
+  var md = document.getElementById('methodDisplay');
+  md.textContent = ep.method;
+  md.className = 'method-tag ' + ep.method;
+  document.getElementById('pathDisplay').value = ep.path;
+  document.getElementById('bodyInput').value = ep.body;
+  document.getElementById('responsePanel').innerHTML = '<div class="response-empty"><div class="icon">o</div><p>Presiona Enviar para ejecutar</p></div>';
+  document.getElementById('statusBadge').textContent = '';
+  document.getElementById('timeBadge').textContent = '';
+}
+
+function highlight(json) {
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(m) {
+    var cls = 'json-number';
+    if (/^"/.test(m)) cls = /:$/.test(m) ? 'json-key' : 'json-string';
+    else if (/true|false/.test(m)) cls = 'json-bool';
+    else if (/null/.test(m)) cls = 'json-null';
+    return '<span class="' + cls + '">' + m + '</span>';
+  });
+}
+
+async function runRequest() {
+  var btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  var ep = endpoints[current];
+  var token = document.getElementById('tokenInput').value.trim();
+  var bodyRaw = document.getElementById('bodyInput').value.trim();
+  var headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  var options = { method: ep.method, headers: headers };
+  if (bodyRaw && ep.method !== 'GET') {
+    try { options.body = JSON.stringify(JSON.parse(bodyRaw)); } catch(e) { options.body = bodyRaw; }
+  }
+  var start = performance.now();
+  try {
+    var customPath = document.getElementById('pathDisplay').value.trim();
+    var res = await fetch(BASE + customPath, options);
+    var elapsed = Math.round(performance.now() - start);
+    var data = await res.json();
+    var badge = document.getElementById('statusBadge');
+    badge.textContent = res.status + ' ' + res.statusText;
+    badge.className = 'status-badge ' + (res.status < 300 ? 's2xx' : res.status < 500 ? 's4xx' : 's5xx');
+    document.getElementById('timeBadge').textContent = elapsed + 'ms';
+    if (data.token) document.getElementById('tokenInput').value = data.token;
+    var pretty = JSON.stringify(data, null, 2);
+    document.getElementById('responsePanel').innerHTML = '<div class="response-content">' + highlight(pretty) + '</div>';
+  } catch(err) {
+    document.getElementById('statusBadge').textContent = 'Error';
+    document.getElementById('statusBadge').className = 'status-badge s5xx';
+    document.getElementById('responsePanel').innerHTML = '<div class="response-content" style="color:var(--red)">' + err.message + '</div>';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Enviar';
+}
+
+async function checkStatus() {
+  try {
+    var res = await fetch(BASE + '/');
+    if (res.ok) {
+      document.getElementById('statusDot').className = 'status-dot online';
+      document.getElementById('statusLabel').textContent = 'Online';
+    } else throw new Error();
+  } catch(e) {
+    document.getElementById('statusDot').className = 'status-dot offline';
+    document.getElementById('statusLabel').textContent = 'Offline';
+  }
+}
+checkStatus();
+setInterval(checkStatus, 5000);
+sel(0);
+</script>
+</body>
+</html>

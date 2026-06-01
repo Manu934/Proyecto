@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 import pruebasRoutes from "./routes/pruebas.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
@@ -10,14 +12,18 @@ import passport from "./config/passport.js";
 
 dotenv.config();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const app = express();
 
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: true,
   credentials: true
 }));
 app.use(express.json());
 app.use(passport.initialize());
+app.use(express.static(join(__dirname, "public")));
 
 app.use("/api/pruebas", pruebasRoutes);
 app.use("/api/admin", adminRoutes);
