@@ -13,7 +13,12 @@ export const register = async (req, res) => {
       return res.status(409).json({ ok: false, message: "El email ya está registrado" });
 
     const usuario = await Usuario.create({ nombre, email, password });
-    res.status(201).json({ ok: true, message: "Usuario registrado", data: usuario });
+    const token = jwt.sign(
+      { id: usuario.id, email: usuario.email, rol: usuario.rol },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+    res.status(201).json({ ok: true, token, usuario });
   } catch (error) {
     res.status(500).json({ ok: false, message: "Error al registrar", error: error.message });
   }
@@ -38,10 +43,8 @@ export const login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
-
     res.json({ ok: true, token, usuario: { id: usuario.id, nombre: usuario.nombre, email: usuario.email, rol: usuario.rol } });
   } catch (error) {
-    console.error("ERROR LOGIN:", error);
     res.status(500).json({ ok: false, message: "Error al iniciar sesión", error: error.message });
   }
 };
@@ -53,5 +56,13 @@ export const googleCallback = (req, res) => {
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
   );
-  res.json({ ok: true, token, usuario: { id: usuario.id, nombre: usuario.nombre, email: usuario.email, rol: usuario.rol } });
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+  const params = new URLSearchParams({
+    token,
+    id:     String(usuario.id),
+    nombre: usuario.nombre,
+    email:  usuario.email,
+    rol:    usuario.rol || "usuario",
+  });
+  res.redirect(`${frontendUrl}/auth/callback?${params}`);
 };
