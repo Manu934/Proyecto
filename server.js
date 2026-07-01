@@ -24,6 +24,7 @@ app.use(cors({
 app.use(express.json());
 app.use(passport.initialize());
 app.use(express.static(join(__dirname, "public")));
+app.use("/uploads", express.static(join(__dirname, "uploads")));
 
 app.use("/api/pruebas", pruebasRoutes);
 app.use("/api/admin", adminRoutes);
