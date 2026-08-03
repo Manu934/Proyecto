@@ -21,6 +21,9 @@ function mapRow(row) {
     archivo_url:    c.archivo_url    || null,
     archivo_nombre: c.archivo_nombre || null,
     archivo_tipo:   c.archivo_tipo   || null,
+    // El jsonb completo: mapRow aplana solo algunos campos conocidos y el resto
+    // (ejercicios, etc.) se perdía, así que la IA nunca veía el contenido real.
+    contenido:      c,
     estado:         row.estado,
     usuario_id:     row.usuario_id   || c.usuario_id    || null,
     usuario_nombre: row.usuario_nombre || c.usuario_nombre || "Anónimo",

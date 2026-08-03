@@ -1,5 +1,12 @@
+import fs from "fs";
 import Prueba from "../models/Prueba.js";
 import pool from "../config/db.js";
+
+// Borra un archivo ya subido cuando el request termina en error, para no dejar
+// huérfanos en uploads/ que nadie referencia.
+const descartarArchivo = (file) => {
+  if (file?.path) fs.unlink(file.path, () => {});
+};
 
 export const getPruebas = async (req, res) => {
   try {
@@ -33,6 +40,8 @@ export const createPrueba = async (req, res) => {
     const usuario_id     = req.body.usuario_id ? Number(req.body.usuario_id) : null;
 
     if (!materia || !año || !colegio) {
+      // multer ya escribió el archivo en disco: si no seguimos, hay que borrarlo.
+      descartarArchivo(req.file);
       return res.status(400).json({ ok: false, message: "Faltan campos obligatorios (materia, año, colegio)" });
     }
 
@@ -40,10 +49,19 @@ export const createPrueba = async (req, res) => {
 
     let contenido = { notas, usuario_id, usuario_nombre, usuario_email };
     if (req.body.contenido) {
-      contenido = typeof req.body.contenido === "string"
-        ? JSON.parse(req.body.contenido)
-        : req.body.contenido;
-    } else if (req.file) {
+      try {
+        contenido = typeof req.body.contenido === "string"
+          ? JSON.parse(req.body.contenido)
+          : req.body.contenido;
+      } catch {
+        descartarArchivo(req.file);
+        return res.status(400).json({ ok: false, message: "El campo contenido no es JSON válido" });
+      }
+    }
+
+    // Va aparte del if de arriba: mandar contenido y archivo a la vez es válido
+    // y antes el archivo se perdía silenciosamente.
+    if (req.file) {
       const f = req.file;
       contenido.archivo_url    = `/uploads/${f.filename}`;
       contenido.archivo_nombre = f.originalname;
@@ -56,6 +74,7 @@ export const createPrueba = async (req, res) => {
     });
     res.status(201).json({ ok: true, message: "Prueba enviada para revisión", id });
   } catch (error) {
+    descartarArchivo(req.file);
     res.status(500).json({ ok: false, message: "Error al crear la prueba", error: error.message });
   }
 };

@@ -1,4 +1,4 @@
-import geminiService from "../services/gemini.service.js";
+import iaService from "../services/ia.service.js";
 import Prueba from "../models/Prueba.js";
 
 export const preguntarSobrePrueba = async (req, res) => {
@@ -15,7 +15,7 @@ export const preguntarSobrePrueba = async (req, res) => {
       return res.status(404).json({ ok: false, message: "Prueba no encontrada" });
     }
 
-    const respuesta = await geminiService.askWithContext(pregunta, prueba);
+    const respuesta = await iaService.askWithContext(pregunta, prueba);
     res.json({ ok: true, respuesta });
   } catch (error) {
     res.status(500).json({ ok: false, message: "Error con la IA", error: error.message });
@@ -29,7 +29,7 @@ export const generarPrueba = async (req, res) => {
       return res.status(404).json({ ok: false, message: "Prueba no encontrada" });
     }
 
-    const nuevaPrueba = await geminiService.generarPrueba(prueba);
+    const nuevaPrueba = await iaService.generarPrueba(prueba);
     res.json({ ok: true, prueba: nuevaPrueba });
   } catch (error) {
     res.status(500).json({ ok: false, message: "Error generando prueba", error: error.message });
