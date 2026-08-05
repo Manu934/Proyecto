@@ -4,8 +4,8 @@
     "type": "module",
     "main": "server.js",
     "scripts": {
-        "dev": "nodemon server.js",
-        "start": "node server.js"
+        "dev": "dotenvx run -- nodemon server.js",
+        "start": "dotenvx run -- node server.js"
     },
     "repository": {
         "type": "git",
@@ -20,6 +20,7 @@
     "homepage": "https://github.com/Manu934/Proyecto#readme",
     "description": "",
     "dependencies": {
+        "@dotenvx/dotenvx": "^2.19.2",
         "bcryptjs": "^3.0.3",
         "cors": "^2.8.6",
         "dotenv": "^17.4.2",
