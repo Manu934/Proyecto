@@ -82,7 +82,85 @@ const completar = async (model, userPrompt, { maxTokens, temperature = 0.6, imag
   return texto;
 };
 
+// Prompt de sistema para /api/ia (chat con historial completo). Separado del
+// SYSTEM_PROMPT de arriba porque acá sí conviene describir el rol con más
+// detalle: es la única ruta que arma una conversación de varias vueltas.
+const construirSystemPrompt = (contexto = {}, prueba = null) => {
+  const { colegio, año, materia, profesor, tema } = contexto;
+  const contenido = prueba ? contenidoParaPrompt(prueba.contenido) || {} : {};
+  const preguntas = typeof contenido.preguntas === "string" ? contenido.preguntas.trim() : "";
+  const notas = typeof contenido.notas === "string" ? contenido.notas.trim() : "";
+
+  const partes = [
+    SYSTEM_PROMPT,
+    "",
+    "CONTEXTO DEL ESTUDIANTE",
+    `- Colegio: ${colegio || "No especificado"}`,
+    `- Año: ${año || "No especificado"}`,
+    `- Materia: ${materia || "No especificada"}`,
+    `- Profesor/a: ${profesor || "No especificado"}`,
+    `- Tema: ${tema || "No especificado"}`,
+  ];
+
+  if (prueba) {
+    partes.push(
+      "",
+      "PRUEBA QUE ESTÁ MIRANDO EL ESTUDIANTE",
+      `- Tema: ${prueba.tema || "—"}`,
+      `- Materia: ${prueba.materia || "—"}`,
+      `- Colegio y año: ${prueba.escuela || "—"} · ${prueba.anio || "—"}`,
+      `- Profesor/a: ${prueba.profesor || "—"}`
+    );
+    if (preguntas) partes.push("", "PREGUNTAS DE LA PRUEBA (transcriptas por quien la subió):", preguntas);
+    if (notas) partes.push("", "NOTAS DE QUIEN LA SUBIÓ:", notas);
+    partes.push(
+      "",
+      "Si además te adjuntan la foto de la prueba, leela con atención: transcribí cada " +
+        "consigna antes de resolverla para no confundir números ni signos."
+    );
+  }
+
+  return partes.join("\n");
+};
+
 const iaService = {
+
+  // Chat con historial completo (POST /api/ia): así es como habla el front hoy.
+  // Recibe la conversación entera, no solo la última pregunta, y arma un
+  // system prompt más completo con la prueba (si hay una asociada).
+  chat: async ({ mensajes, contexto = {}, prueba = null }) => {
+    const imagen = prueba ? cargarImagen(prueba.contenido) : null;
+    const systemPrompt = construirSystemPrompt(contexto, prueba);
+
+    let fotoYaAdjuntada = false;
+    const mensajesConvertidos = mensajes.map((m) => {
+      const role = m.role === "assistant" ? "assistant" : "user";
+      // La foto va sólo en el primer turno del usuario: alcanza para que el
+      // modelo la tenga en cuenta el resto de la charla sin reenviarla cada vez.
+      if (imagen && role === "user" && !fotoYaAdjuntada) {
+        fotoYaAdjuntada = true;
+        return {
+          role,
+          content: [
+            { type: "text", text: m.content },
+            { type: "image_url", image_url: { url: imagen } },
+          ],
+        };
+      }
+      return { role, content: m.content };
+    });
+
+    const completion = await client.chat.completions.create({
+      model: imagen ? MODEL_VISION : MODEL_CHAT,
+      messages: [{ role: "system", content: systemPrompt }, ...mensajesConvertidos],
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+
+    const texto = completion.choices[0]?.message?.content?.trim();
+    if (!texto) throw new Error(`El modelo ${imagen ? MODEL_VISION : MODEL_CHAT} devolvió una respuesta vacía`);
+    return texto;
+  },
 
   // Pregunta libre: no hay una prueba guardada de por medio, solo el
   // contexto que el estudiante eligió a mano en el chat (materia, año, etc.).
