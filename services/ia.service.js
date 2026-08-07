@@ -42,8 +42,13 @@ const contenidoParaPrompt = (contenido) => {
 const cargarImagen = (contenido) => {
   if (contenido?.archivo_tipo !== "image" || !contenido.archivo_url) return null;
 
-  // archivo_url es "/uploads/<nombre>". Nos quedamos solo con el nombre: si no,
-  // un valor tipo "/uploads/../../.env" leería archivos fuera de la carpeta.
+  // Subida actual del front: la foto viaja comprimida y en base64 (data URL)
+  // directo dentro de contenido.archivo_url, nunca toca el disco del server.
+  if (contenido.archivo_url.startsWith("data:")) return contenido.archivo_url;
+
+  // Subida vieja vía multer: archivo_url es "/uploads/<nombre>". Nos quedamos
+  // solo con el nombre: si no, un valor tipo "/uploads/../../.env" leería
+  // archivos fuera de la carpeta.
   const ruta = join(UPLOADS_DIR, basename(contenido.archivo_url));
   if (!fs.existsSync(ruta)) return null;
 
@@ -78,6 +83,27 @@ const completar = async (model, userPrompt, { maxTokens, temperature = 0.6, imag
 };
 
 const iaService = {
+
+  // Pregunta libre: no hay una prueba guardada de por medio, solo el
+  // contexto que el estudiante eligió a mano en el chat (materia, año, etc.).
+  askFreeform: async (pregunta, contexto = {}) => {
+    const { colegio, año, materia, profesor, tema } = contexto;
+
+    const prompt = `
+      Contexto del estudiante:
+      - Colegio: ${colegio || "no especificado"}
+      - Año: ${año || "no especificado"}
+      - Materia: ${materia || "no especificada"}
+      - Profesor/a: ${profesor || "no especificado"}
+      - Tema: ${tema || "no especificado"}
+
+      El estudiante pregunta: "${pregunta}"
+
+      Respondé de forma clara, paso a paso si es necesario.
+    `;
+
+    return completar(MODEL_CHAT, prompt, { maxTokens: 1024 });
+  },
 
   askWithContext: async (pregunta, prueba) => {
     const imagen = cargarImagen(prueba.contenido);
