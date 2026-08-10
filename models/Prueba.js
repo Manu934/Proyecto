@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { ensureFavoritosTable } from "./Favorito.js";
 
 function safeJson(raw) {
   if (!raw) return {};
@@ -29,35 +30,78 @@ function mapRow(row) {
     usuario_nombre: row.usuario_nombre || c.usuario_nombre || "Anónimo",
     usuario_email:  row.usuario_email  || c.usuario_email  || "",
     created_at:     row.fecha,
-    favorito:       false,
+    favorito:       row.favorito === true,
   };
 }
 
+// EXISTS(...) contra favoritos para el usuario logueado, o "false" fijo si
+// nadie está logueado (usuarioId null): así la misma consulta sirve para
+// visitantes anónimos y para usuarios con sesión.
+const favoritoSelect = (usuarioId, params) => {
+  if (!usuarioId) return "false AS favorito";
+  params.push(usuarioId);
+  return `EXISTS(SELECT 1 FROM favoritos f WHERE f.prueba_id = p.id AND f.usuario_id = $${params.length}) AS favorito`;
+};
+
 const Prueba = {
-  getAll: async ({ materia, anio, escuela, profesor, tema } = {}) => {
-    let query = "SELECT * FROM pruebas WHERE estado = 'aprobada'";
+  getAll: async ({ materia, anio, escuela, profesor, tema } = {}, usuarioId = null) => {
     const params = [];
-    let i = 1;
-    if (materia)  { query += ` AND materia = $${i++}`;       params.push(materia); }
-    if (anio)     { query += ` AND anio = $${i++}`;          params.push(anio); }
-    if (escuela)  { query += ` AND escuela = $${i++}`;       params.push(escuela); }
-    if (profesor) { query += ` AND profesor ILIKE $${i++}`; params.push(`%${profesor}%`); }
-    if (tema)     { query += ` AND tema ILIKE $${i++}`;     params.push(`%${tema}%`); }
-    query += " ORDER BY fecha DESC";
+    const favSelect = favoritoSelect(usuarioId, params);
+    let query = `SELECT p.*, ${favSelect} FROM pruebas p WHERE p.estado = 'aprobada'`;
+    let i = params.length + 1;
+    if (materia)  { query += ` AND p.materia = $${i++}`;       params.push(materia); }
+    if (anio)     { query += ` AND p.anio = $${i++}`;          params.push(anio); }
+    if (escuela)  { query += ` AND p.escuela = $${i++}`;       params.push(escuela); }
+    if (profesor) { query += ` AND p.profesor ILIKE $${i++}`; params.push(`%${profesor}%`); }
+    if (tema)     { query += ` AND p.tema ILIKE $${i++}`;     params.push(`%${tema}%`); }
+    query += " ORDER BY p.fecha DESC";
     const result = await pool.query(query, params);
     return result.rows.map(mapRow);
   },
 
-  getById: async (id) => {
-    const result = await pool.query("SELECT * FROM pruebas WHERE id = $1", [id]);
+  getById: async (id, usuarioId = null) => {
+    const params = usuarioId ? [id, usuarioId] : [id];
+    const favSelect = usuarioId
+      ? "EXISTS(SELECT 1 FROM favoritos f WHERE f.prueba_id = p.id AND f.usuario_id = $2) AS favorito"
+      : "false AS favorito";
+    const result = await pool.query(
+      `SELECT p.*, ${favSelect} FROM pruebas p WHERE p.id = $1`,
+      params
+    );
     return result.rows[0] ? mapRow(result.rows[0]) : null;
   },
 
-  create: async ({ titulo, materia, anio, profesor, tema, escuela, contenido }) => {
+  // "Guardadas": las pruebas que el usuario marcó como favoritas.
+  getFavoritos: async (usuarioId) => {
+    await ensureFavoritosTable();
     const result = await pool.query(
-      `INSERT INTO pruebas (titulo, materia, anio, profesor, tema, escuela, contenido, estado, fecha)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'pendiente',NOW()) RETURNING id`,
-      [titulo, materia, anio, profesor || null, tema || null, escuela, JSON.stringify(contenido)]
+      `SELECT p.*, true AS favorito
+         FROM pruebas p
+         INNER JOIN favoritos f ON f.prueba_id = p.id AND f.usuario_id = $1
+        ORDER BY p.id DESC`,
+      [usuarioId]
+    );
+    return result.rows.map(mapRow);
+  },
+
+  // "Mis pruebas": todo lo que subió el usuario, sin importar el estado.
+  getByUsuario: async (usuarioId) => {
+    const result = await pool.query(
+      `SELECT p.*,
+          EXISTS(SELECT 1 FROM favoritos f WHERE f.prueba_id = p.id AND f.usuario_id = $1) AS favorito
+        FROM pruebas p
+       WHERE p.usuario_id = $1
+       ORDER BY p.id DESC`,
+      [usuarioId]
+    );
+    return result.rows.map(mapRow);
+  },
+
+  create: async ({ titulo, materia, anio, profesor, tema, escuela, contenido, usuario_id }) => {
+    const result = await pool.query(
+      `INSERT INTO pruebas (titulo, materia, anio, profesor, tema, escuela, contenido, usuario_id, estado, fecha)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pendiente',NOW()) RETURNING id`,
+      [titulo, materia, anio, profesor || null, tema || null, escuela, JSON.stringify(contenido), usuario_id || null]
     );
     return result.rows[0].id;
   },
