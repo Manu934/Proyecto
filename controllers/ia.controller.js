@@ -1,11 +1,25 @@
 import iaService from "../services/ia.service.js";
 import Prueba from "../models/Prueba.js";
+import Conversacion from "../models/Conversacion.js";
+import { LIMITE_DIARIO, usoUltimas24hs, registrarUso } from "../models/IaUso.js";
 
 // POST /api/ia — contrato que usa el front hoy: manda la conversación entera
-// ({ mensajes, contexto, prueba_id }) y espera { reply }.
+// ({ mensajes, contexto, prueba_id, conversacion_id }) y espera { reply, conversacion_id }.
+// El historial se guarda solo (como en Claude/ChatGPT): cada chat queda en
+// "conversaciones" + "mensajes_ia", listo para retomarlo después.
 export const chat = async (req, res) => {
   try {
-    const { mensajes, contexto, prueba_id: pruebaIdRaw } = req.body;
+    const usuarioId = req.usuario.id;
+
+    const usados = await usoUltimas24hs(usuarioId);
+    if (usados >= LIMITE_DIARIO) {
+      return res.status(429).json({
+        ok: false,
+        message: `Alcanzaste el límite de ${LIMITE_DIARIO} preguntas a la IA por día. Probá de nuevo más tarde.`,
+      });
+    }
+
+    const { mensajes, contexto, prueba_id: pruebaIdRaw, conversacion_id: conversacionIdRaw } = req.body;
 
     const limpios = (Array.isArray(mensajes) ? mensajes : [])
       .filter((m) => typeof m?.content === "string" && m.content.trim())
@@ -21,10 +35,81 @@ export const chat = async (req, res) => {
       prueba = await Prueba.getById(pruebaId);
     }
 
+    // El último mensaje del array es siempre el que el estudiante acaba de
+    // escribir: el resto ya está guardado de vueltas anteriores.
+    const nuevoMensaje = limpios[limpios.length - 1];
+
+    let conversacionId = Number(conversacionIdRaw);
+    const esConversacionNueva = !Number.isInteger(conversacionId) || conversacionId <= 0;
+
+    if (esConversacionNueva) {
+      conversacionId = await Conversacion.crear({
+        usuarioId,
+        pruebaId: prueba?.id ?? null,
+        contexto: contexto || {},
+        primerMensaje: nuevoMensaje.content,
+      });
+    } else if (!(await Conversacion.perteneceA(conversacionId, usuarioId))) {
+      return res.status(404).json({ ok: false, message: "Conversación no encontrada" });
+    }
+
+    await Conversacion.agregarMensaje(conversacionId, "user", nuevoMensaje.content);
+
     const reply = await iaService.chat({ mensajes: limpios, contexto: contexto || {}, prueba });
-    res.json({ ok: true, reply });
+
+    await Conversacion.agregarMensaje(conversacionId, "assistant", reply);
+
+    // Se cuenta recién si la IA respondió bien: un error nuestro o de la API
+    // no debería gastarle cupo al estudiante.
+    await registrarUso(usuarioId);
+
+    res.json({ ok: true, reply, conversacion_id: conversacionId, usados: usados + 1, limite: LIMITE_DIARIO });
   } catch (error) {
     res.status(502).json({ ok: false, message: `No se pudo contactar a la IA: ${error.message}` });
+  }
+};
+
+// GET /api/ia/conversaciones — lista de chats del usuario, más nuevo primero.
+export const listarConversaciones = async (req, res) => {
+  try {
+    const conversaciones = await Conversacion.listarDeUsuario(req.usuario.id);
+    res.json({ ok: true, data: conversaciones });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: "Error al listar conversaciones", error: error.message });
+  }
+};
+
+// GET /api/ia/conversaciones/:id — un chat completo con todos sus mensajes.
+export const obtenerConversacion = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Conversación inválida" });
+    }
+    const conversacion = await Conversacion.obtenerConMensajes(id, req.usuario.id);
+    if (!conversacion) {
+      return res.status(404).json({ ok: false, message: "Conversación no encontrada" });
+    }
+    res.json({ ok: true, data: conversacion });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: "Error al obtener la conversación", error: error.message });
+  }
+};
+
+// DELETE /api/ia/conversaciones/:id
+export const eliminarConversacion = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Conversación inválida" });
+    }
+    const borrada = await Conversacion.eliminar(id, req.usuario.id);
+    if (!borrada) {
+      return res.status(404).json({ ok: false, message: "Conversación no encontrada" });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: "Error al eliminar la conversación", error: error.message });
   }
 };
 
