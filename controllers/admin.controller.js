@@ -9,6 +9,15 @@ export const getPendientes = async (req, res) => {
   }
 };
 
+export const getRechazadas = async (req, res) => {
+  try {
+    const pruebas = await Prueba.getAllAdmin("rechazada");
+    res.json({ ok: true, data: pruebas });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: "Error", error: error.message });
+  }
+};
+
 export const getAllPruebas = async (req, res) => {
   try {
     const estado = req.query.estado;

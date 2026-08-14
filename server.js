@@ -35,7 +35,10 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
-app.use(express.json());
+// Las fotos de las pruebas viajan como base64 dentro del JSON (hasta ~1.5MB
+// ya comprimidas, más el overhead de base64): el límite por defecto de
+// express.json() es 100kb y las rechazaba con 413.
+app.use(express.json({ limit: "15mb" }));
 app.use(passport.initialize());
 app.use(express.static(join(__dirname, "public")));
 app.use("/uploads", express.static(join(__dirname, "uploads")));

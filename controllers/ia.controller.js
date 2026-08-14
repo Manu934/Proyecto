@@ -65,7 +65,19 @@ export const chat = async (req, res) => {
 
     res.json({ ok: true, reply, conversacion_id: conversacionId, usados: usados + 1, limite: LIMITE_DIARIO });
   } catch (error) {
-    res.status(502).json({ ok: false, message: `No se pudo contactar a la IA: ${error.message}` });
+    // Log completo del lado del server: si esto se repite seguido, acá queda
+    // el detalle técnico para diagnosticarlo sin depender de lo que ve el usuario.
+    console.error("Error en /api/ia:", error.status ?? "", error.message);
+
+    // Un 5xx de NVIDIA es un problema transitorio de ellos (su motor de
+    // inferencia se cae de vez en cuando en el free tier), no algo que el
+    // estudiante pueda solucionar reformulando la pregunta.
+    const esErrorTransitorioDeNvidia = typeof error.status === "number" && error.status >= 500;
+    const message = esErrorTransitorioDeNvidia
+      ? "La IA tuvo un problema momentáneo respondiendo (no es un error tuyo). Probá de nuevo en unos segundos."
+      : `No se pudo contactar a la IA: ${error.message}`;
+
+    res.status(502).json({ ok: false, message });
   }
 };
 
