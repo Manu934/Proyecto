@@ -18,8 +18,16 @@ const client = new OpenAI({
 // están saturados y tardan entre 40 s y 3 minutos, así que no sirven acá.
 const MODEL_CHAT = process.env.NVIDIA_MODEL_CHAT || "meta/llama-3.1-8b-instruct";
 const MODEL_GENERACION = process.env.NVIDIA_MODEL_GENERACION || "meta/llama-3.1-8b-instruct";
-// Cuando la prueba es una foto, este modelo la lee directamente.
+// Cuando la prueba es una foto, este modelo la lee directamente. Es el más
+// inestable del free tier de NVIDIA (se cae seguido con fotos grandes/reales),
+// por eso tiene respaldo en Gemini más abajo.
 const MODEL_VISION = process.env.NVIDIA_MODEL_VISION || "nvidia/nemotron-nano-12b-v2-vl";
+
+// Respaldo cuando NVIDIA falla: mismo proveedor que ya usa el front en
+// producción (Vercel), así el chat no corta en seco solo porque el free tier
+// de NVIDIA tuvo un mal momento.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 const UPLOADS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "uploads");
 
@@ -56,30 +64,115 @@ const cargarImagen = (contenido) => {
   return `data:${mime};base64,${fs.readFileSync(ruta).toString("base64")}`;
 };
 
-const completar = async (model, userPrompt, { maxTokens, temperature = 0.6, imagen = null }) => {
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: imagen
-          ? [
-              { type: "text", text: userPrompt },
-              { type: "image_url", image_url: { url: imagen } },
-            ]
-          : userPrompt,
-      },
-    ],
-    temperature,
-    max_tokens: maxTokens,
+// Convierte nuestros mensajes estilo OpenAI (role/content, content puede ser
+// string o [{type:"text"|"image_url", ...}]) al formato de Gemini.
+const mensajesParaGemini = (messages) => {
+  const systemMsg = messages.find((m) => m.role === "system");
+  const resto = messages.filter((m) => m.role !== "system");
+
+  const contents = resto.map((m) => {
+    const role = m.role === "assistant" ? "model" : "user";
+    if (!Array.isArray(m.content)) return { role, parts: [{ text: m.content }] };
+
+    const parts = m.content.map((parte) => {
+      if (parte.type === "image_url") {
+        const match = /^data:([^;,]+);base64,([\s\S]*)$/.exec(parte.image_url?.url || "");
+        if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+        return { text: "" };
+      }
+      return { text: parte.text || "" };
+    });
+    return { role, parts };
   });
 
-  const texto = completion.choices[0]?.message?.content?.trim();
-  if (!texto) {
-    throw new Error(`El modelo ${model} devolvió una respuesta vacía`);
+  return { systemInstruction: systemMsg ? { parts: [{ text: systemMsg.content }] } : undefined, contents };
+};
+
+const llamarGemini = async (messages, { maxTokens, temperature = 0.6 }) => {
+  if (!GEMINI_API_KEY) {
+    throw new Error("Gemini no está configurado (falta GEMINI_API_KEY)");
   }
+
+  const { systemInstruction, contents } = mensajesParaGemini(messages);
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(systemInstruction ? { systemInstruction } : {}),
+        contents,
+        generationConfig: { temperature, maxOutputTokens: maxTokens },
+      }),
+      signal: AbortSignal.timeout(60000),
+    }
+  );
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(data?.error?.message || `Gemini respondió ${res.status}`);
+  }
+
+  const texto = data?.candidates?.[0]?.content?.parts
+    ?.map((p) => p.text || "")
+    .join("")
+    .trim();
+  if (!texto) throw new Error("Gemini devolvió una respuesta vacía");
   return texto;
+};
+
+// Punto único de llamada al modelo: intenta NVIDIA primero (que ya tiene sus
+// propios reintentos por dentro vía el SDK) y, si igual falla, reintenta una
+// vez con Gemini antes de rendirse. Así el chat casi nunca corta en seco solo
+// porque el free tier de NVIDIA tuvo un mal momento.
+const completarMensajes = async (model, messages, { maxTokens, temperature = 0.6 }) => {
+  try {
+    const completion = await client.chat.completions.create({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+    });
+    const texto = completion.choices[0]?.message?.content?.trim();
+    if (!texto) throw new Error(`El modelo ${model} devolvió una respuesta vacía`);
+    return texto;
+  } catch (errorNvidia) {
+    if (!GEMINI_API_KEY) throw errorNvidia;
+
+    // Un intento extra acá: Gemini también puede tener un momento de
+    // saturación puntual, y ya que NVIDIA falló no vale la pena rendirse
+    // por una sola mala pasada del respaldo.
+    let errorGemini;
+    for (let intento = 0; intento < 2; intento++) {
+      try {
+        return await llamarGemini(messages, { maxTokens, temperature });
+      } catch (e) {
+        errorGemini = e;
+        if (intento === 0) await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+
+    // Si los dos proveedores fallan, el error de NVIDIA es el que más dice
+    // sobre qué pasó (Gemini es solo el respaldo).
+    console.error("Gemini también falló como respaldo:", errorGemini.message);
+    throw errorNvidia;
+  }
+};
+
+const completar = (model, userPrompt, { maxTokens, temperature = 0.6, imagen = null }) => {
+  const content = imagen
+    ? [
+        { type: "text", text: userPrompt },
+        { type: "image_url", image_url: { url: imagen } },
+      ]
+    : userPrompt;
+
+  return completarMensajes(
+    model,
+    [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content }],
+    { maxTokens, temperature }
+  );
 };
 
 // Prompt de sistema para /api/ia (chat con historial completo). Separado del
@@ -150,16 +243,11 @@ const iaService = {
       return { role, content: m.content };
     });
 
-    const completion = await client.chat.completions.create({
-      model: imagen ? MODEL_VISION : MODEL_CHAT,
-      messages: [{ role: "system", content: systemPrompt }, ...mensajesConvertidos],
-      temperature: 0.7,
-      max_tokens: 2048,
-    });
-
-    const texto = completion.choices[0]?.message?.content?.trim();
-    if (!texto) throw new Error(`El modelo ${imagen ? MODEL_VISION : MODEL_CHAT} devolvió una respuesta vacía`);
-    return texto;
+    return completarMensajes(
+      imagen ? MODEL_VISION : MODEL_CHAT,
+      [{ role: "system", content: systemPrompt }, ...mensajesConvertidos],
+      { maxTokens: 2048, temperature: 0.7 }
+    );
   },
 
   // Pregunta libre: no hay una prueba guardada de por medio, solo el
