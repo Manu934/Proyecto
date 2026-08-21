@@ -7,11 +7,14 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // NVIDIA NIM expone una API compatible con la de OpenAI, por eso usamos ese SDK.
+// Timeout corto y poco reintento a propósito: si NVIDIA está caída del todo,
+// preferimos pasar rápido al respaldo de Gemini en vez de que el estudiante
+// espere varios minutos antes de que el backend ni siquiera lo intente.
 const client = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY,
   baseURL: "https://integrate.api.nvidia.com/v1",
-  timeout: 120000,
-  maxRetries: 2,
+  timeout: 20000,
+  maxRetries: 1,
 });
 
 // Modelos chicos y rápidos (~2-5 s). Los modelos grandes del free tier de NVIDIA
@@ -178,11 +181,17 @@ const completar = (model, userPrompt, { maxTokens, temperature = 0.6, imagen = n
 // Prompt de sistema para /api/ia (chat con historial completo). Separado del
 // SYSTEM_PROMPT de arriba porque acá sí conviene describir el rol con más
 // detalle: es la única ruta que arma una conversación de varias vueltas.
+// Materias donde las respuestas suelen tener fórmulas/cálculos: ahí conviene
+// el formato con LaTeX y pasos numerados. El chat ya sabe renderizar Markdown
+// + LaTeX ($...$ en línea, $$...$$ en bloque), así que tiene sentido pedírselo.
+const MATERIAS_CON_FORMULAS = new Set(["Matemática", "Física", "Química", "Físico-Química"]);
+
 const construirSystemPrompt = (contexto = {}, prueba = null) => {
   const { colegio, año, materia, profesor, tema } = contexto;
   const contenido = prueba ? contenidoParaPrompt(prueba.contenido) || {} : {};
   const preguntas = typeof contenido.preguntas === "string" ? contenido.preguntas.trim() : "";
   const notas = typeof contenido.notas === "string" ? contenido.notas.trim() : "";
+  const materiaEfectiva = prueba?.materia || materia || "";
 
   const partes = [
     SYSTEM_PROMPT,
@@ -194,6 +203,26 @@ const construirSystemPrompt = (contexto = {}, prueba = null) => {
     `- Profesor/a: ${profesor || "No especificado"}`,
     `- Tema: ${tema || "No especificado"}`,
   ];
+
+  if (MATERIAS_CON_FORMULAS.has(materiaEfectiva)) {
+    partes.push(
+      "",
+      "CÓMO RESOLVÉS EJERCICIOS DE ESTA MATERIA",
+      "El chat renderiza Markdown y LaTeX de verdad (no muestres el código, se ve como fórmula), " +
+        "así que resolvé los ejercicios con esta estructura:",
+      "1. Saludo corto + qué vas a resolver.",
+      "2. Si hay una fórmula/definición clave, un recordatorio breve con la fórmula en bloque " +
+        "($$...$$) y una lista de qué es cada término.",
+      "3. Un separador (---), la consigna transcripta tal cual como cita (> ...), y otro separador.",
+      "4. Un título \"### Resolución\" y, si hay varios incisos, un \"#### Parte a)\" por cada uno.",
+      "5. Pasos numerados (\"Paso 1:\", \"Paso 2:\"...), cada uno con una frase explicando qué " +
+        "hacés y la cuenta correspondiente en LaTeX: $...$ para algo en medio de una oración, " +
+        "$$...$$ en línea aparte para desarrollos o el resultado de un paso.",
+      "6. El resultado final en **negrita**.",
+      "No hace falta este formato completo para preguntas cortas o conceptuales: usalo cuando " +
+        "estés resolviendo un ejercicio de verdad."
+    );
+  }
 
   if (prueba) {
     partes.push(
@@ -246,7 +275,10 @@ const iaService = {
     return completarMensajes(
       imagen ? MODEL_VISION : MODEL_CHAT,
       [{ role: "system", content: systemPrompt }, ...mensajesConvertidos],
-      { maxTokens: 2048, temperature: 0.7 }
+      // Una resolución paso a paso con LaTeX (fórmulas de recordatorio +
+      // consigna transcripta + varios pasos) puede necesitar bastante más
+      // que 2048 tokens; con eso se cortaba a mitad de la respuesta.
+      { maxTokens: 4096, temperature: 0.7 }
     );
   },
 
