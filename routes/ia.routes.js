@@ -19,6 +19,6 @@ router.delete("/conversaciones/:id", verificarToken, eliminarConversacion); // D
 // las dejamos por si algo externo todavía les pega.
 router.post("/preguntar",      preguntarLibre);         // POST /api/ia/preguntar (sin prueba asociada)
 router.post("/:id/preguntar",  preguntarSobrePrueba);    // POST /api/ia/5/preguntar
-router.post("/:id/generar",    generarPrueba);           // POST /api/ia/5/generar
+router.post("/:id/generar",    verificarToken, generarPrueba); // POST /api/ia/5/generar (autoevaluación)
 
 export default router;

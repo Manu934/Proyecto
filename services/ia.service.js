@@ -125,42 +125,63 @@ const llamarGemini = async (messages, { maxTokens, temperature = 0.6 }) => {
   return texto;
 };
 
+// Si NVIDIA falló hace poco con este modelo, nos salteamos el intento (que de
+// todos modos iba a tardar y fallar igual) y vamos directo a Gemini. Sin esto,
+// cada pregunta pierde 20-40s reintentando NVIDIA mientras dura una caída.
+// Es memoria en RAM del proceso (no en la base): se resetea solo al reiniciar
+// el server, y con un modelo por vez, no mezcla "NVIDIA anda mal" entre el
+// chat de texto y el de visión si solo uno de los dos está fallando.
+const NVIDIA_COOLDOWN_MS = 3 * 60 * 1000;
+const nvidiaCooldownHasta = new Map();
+
 // Punto único de llamada al modelo: intenta NVIDIA primero (que ya tiene sus
 // propios reintentos por dentro vía el SDK) y, si igual falla, reintenta una
 // vez con Gemini antes de rendirse. Así el chat casi nunca corta en seco solo
 // porque el free tier de NVIDIA tuvo un mal momento.
 const completarMensajes = async (model, messages, { maxTokens, temperature = 0.6 }) => {
-  try {
-    const completion = await client.chat.completions.create({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    });
-    const texto = completion.choices[0]?.message?.content?.trim();
-    if (!texto) throw new Error(`El modelo ${model} devolvió una respuesta vacía`);
-    return texto;
-  } catch (errorNvidia) {
-    if (!GEMINI_API_KEY) throw errorNvidia;
+  const enCooldown = (nvidiaCooldownHasta.get(model) || 0) > Date.now();
+  let errorNvidia;
 
-    // Un intento extra acá: Gemini también puede tener un momento de
-    // saturación puntual, y ya que NVIDIA falló no vale la pena rendirse
-    // por una sola mala pasada del respaldo.
-    let errorGemini;
-    for (let intento = 0; intento < 2; intento++) {
-      try {
-        return await llamarGemini(messages, { maxTokens, temperature });
-      } catch (e) {
-        errorGemini = e;
-        if (intento === 0) await new Promise((r) => setTimeout(r, 1500));
-      }
+  if (!enCooldown) {
+    try {
+      const completion = await client.chat.completions.create({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+      });
+      const texto = completion.choices[0]?.message?.content?.trim();
+      if (!texto) throw new Error(`El modelo ${model} devolvió una respuesta vacía`);
+      nvidiaCooldownHasta.delete(model); // se recuperó: sacamos el cooldown si había uno
+      return texto;
+    } catch (e) {
+      errorNvidia = e;
+      nvidiaCooldownHasta.set(model, Date.now() + NVIDIA_COOLDOWN_MS);
     }
-
-    // Si los dos proveedores fallan, el error de NVIDIA es el que más dice
-    // sobre qué pasó (Gemini es solo el respaldo).
-    console.error("Gemini también falló como respaldo:", errorGemini.message);
-    throw errorNvidia;
+  } else {
+    console.log(`NVIDIA (${model}) sigue en cooldown tras una falla reciente: salto directo a Gemini.`);
+    errorNvidia = new Error(`NVIDIA (${model}) no disponible (cooldown tras falla reciente)`);
   }
+
+  if (!GEMINI_API_KEY) throw errorNvidia;
+
+  // Un intento extra acá: Gemini también puede tener un momento de
+  // saturación puntual, y ya que NVIDIA falló no vale la pena rendirse
+  // por una sola mala pasada del respaldo.
+  let errorGemini;
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      return await llamarGemini(messages, { maxTokens, temperature });
+    } catch (e) {
+      errorGemini = e;
+      if (intento === 0) await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+
+  // Si los dos proveedores fallan, el error de NVIDIA es el que más dice
+  // sobre qué pasó (Gemini es solo el respaldo).
+  console.error("Gemini también falló como respaldo:", errorGemini.message);
+  throw errorNvidia;
 };
 
 const completar = (model, userPrompt, { maxTokens, temperature = 0.6, imagen = null }) => {
@@ -210,15 +231,16 @@ const construirSystemPrompt = (contexto = {}, prueba = null) => {
       "CÓMO RESOLVÉS EJERCICIOS DE ESTA MATERIA",
       "El chat renderiza Markdown y LaTeX de verdad (no muestres el código, se ve como fórmula), " +
         "así que resolvé los ejercicios con esta estructura:",
-      "1. Saludo corto + qué vas a resolver.",
-      "2. Si hay una fórmula/definición clave, un recordatorio breve con la fórmula en bloque " +
-        "($$...$$) y una lista de qué es cada término.",
-      "3. Un separador (---), la consigna transcripta tal cual como cita (> ...), y otro separador.",
-      "4. Un título \"### Resolución\" y, si hay varios incisos, un \"#### Parte a)\" por cada uno.",
-      "5. Pasos numerados (\"Paso 1:\", \"Paso 2:\"...), cada uno con una frase explicando qué " +
-        "hacés y la cuenta correspondiente en LaTeX: $...$ para algo en medio de una oración, " +
-        "$$...$$ en línea aparte para desarrollos o el resultado de un paso.",
-      "6. El resultado final en **negrita**.",
+      "1. Arrancá con un saludo corto, de tu propia redacción (no copies este renglón tal cual), " +
+        "contando en una oración qué vas a resolver.",
+      "2. Si hace falta, seguí con un recordatorio breve con la fórmula clave en bloque ($$...$$) " +
+        "y una lista de qué es cada término.",
+      "3. Después poné un separador (---), la consigna transcripta tal cual como cita (> ...), y otro separador.",
+      "4. Seguí con un título \"### Resolución\" y, si hay varios incisos, un \"#### Parte a)\" por cada uno.",
+      "5. Desarrollá pasos numerados (\"Paso 1:\", \"Paso 2:\"...), cada uno con una frase tuya " +
+        "explicando qué hacés y la cuenta correspondiente en LaTeX: $...$ para algo en medio de una " +
+        "oración, $$...$$ en línea aparte para desarrollos o el resultado de un paso.",
+      "6. Cerrá con el resultado final en **negrita**.",
       "No hace falta este formato completo para preguntas cortas o conceptuales: usalo cuando " +
         "estés resolviendo un ejercicio de verdad."
     );

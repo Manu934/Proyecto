@@ -162,16 +162,55 @@ export const preguntarSobrePrueba = async (req, res) => {
   }
 };
 
+// POST /api/ia/:id/generar — "Modo autoevaluación": genera ejercicios nuevos
+// parecidos a los de la prueba, para que el estudiante se autoevalúe. Queda
+// guardado en el historial como una conversación más, así después puede
+// seguir chateando ahí mismo para pedir ayuda o corregir sus respuestas.
 export const generarPrueba = async (req, res) => {
   try {
+    const usuarioId = req.usuario.id;
+
+    const usados = await usoUltimas24hs(usuarioId);
+    if (usados >= LIMITE_DIARIO) {
+      return res.status(429).json({
+        ok: false,
+        message: `Alcanzaste el límite de ${LIMITE_DIARIO} preguntas a la IA por día. Probá de nuevo más tarde.`,
+      });
+    }
+
     const prueba = await Prueba.getById(req.params.id);
     if (!prueba) {
       return res.status(404).json({ ok: false, message: "Prueba no encontrada" });
     }
 
-    const nuevaPrueba = await iaService.generarPrueba(prueba);
-    res.json({ ok: true, prueba: nuevaPrueba });
+    const pedido = "Generame una prueba de práctica parecida a esta, para autoevaluarme.";
+    let conversacionId = Number(req.body?.conversacion_id);
+    const esConversacionNueva = !Number.isInteger(conversacionId) || conversacionId <= 0;
+
+    if (esConversacionNueva) {
+      conversacionId = await Conversacion.crear({
+        usuarioId,
+        pruebaId: prueba.id,
+        contexto: {
+          colegio: prueba.escuela, año: prueba.anio, materia: prueba.materia,
+          profesor: prueba.profesor, tema: prueba.tema,
+        },
+        primerMensaje: pedido,
+      });
+    } else if (!(await Conversacion.perteneceA(conversacionId, usuarioId))) {
+      return res.status(404).json({ ok: false, message: "Conversación no encontrada" });
+    }
+
+    await Conversacion.agregarMensaje(conversacionId, "user", pedido);
+
+    const texto = await iaService.generarPrueba(prueba);
+
+    await Conversacion.agregarMensaje(conversacionId, "assistant", texto);
+    await registrarUso(usuarioId);
+
+    res.json({ ok: true, texto, conversacion_id: conversacionId, usados: usados + 1, limite: LIMITE_DIARIO });
   } catch (error) {
-    res.status(500).json({ ok: false, message: "Error generando prueba", error: error.message });
+    console.error("Error en /api/ia/:id/generar:", error.status ?? "", error.message);
+    res.status(502).json({ ok: false, message: `No se pudo generar la prueba de práctica: ${error.message}` });
   }
 };
